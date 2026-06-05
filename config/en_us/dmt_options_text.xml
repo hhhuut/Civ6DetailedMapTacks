@@ -13,5 +13,8 @@
         <Row Tag="LOC_DMT_OPTIONS_HOTKEY_TOGGLE_MAP_TACK_VISIBILITY">
             <Text>Toggle Map Tacks Visibility</Text>
         </Row>
+        <Row Tag="LOC_DMT_OPTIONS_HOTKEY_OPTIMIZE_DISTRICTS">
+            <Text>Optimize District Layout</Text>
+        </Row>
     </EnglishText>
 </GameData>

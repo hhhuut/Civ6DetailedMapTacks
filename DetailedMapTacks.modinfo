@@ -27,6 +27,12 @@
       </Properties>
       <File>ui/dmt_yieldcalculator.xml</File>
     </AddUserInterfaces>
+    <AddUserInterfaces id="dmt_optimizer_popup">
+      <Properties>
+        <Context>InGame</Context>
+      </Properties>
+      <File>ui/dmt_optimizer_popup.xml</File>
+    </AddUserInterfaces>
     <ReplaceUIScript id="mappinmanager">
       <Properties>
         <LoadOrder>12345</LoadOrder> <!-- Higher than Map Tacks mod's 12000. -->
@@ -56,6 +62,9 @@
       <File>ui/dmt_serialize.lua</File>
       <File>ui/dmt_yieldcalculator.lua</File>
       <File>ui/dmt_yieldcalculator.xml</File>
+      <File>ui/dmt_optimizer.lua</File>
+      <File>ui/dmt_optimizer_popup.lua</File>
+      <File>ui/dmt_optimizer_popup.xml</File>
       <File>ui/mappinmanager_dmt.lua</File>
       <File>ui/mappinmanager.xml</File>
       <File>ui/mappinpopup_dmt.lua</File>
@@ -76,6 +85,9 @@
     <File>ui/dmt_serialize.lua</File>
     <File>ui/dmt_yieldcalculator.lua</File>
     <File>ui/dmt_yieldcalculator.xml</File>
+    <File>ui/dmt_optimizer.lua</File>
+    <File>ui/dmt_optimizer_popup.lua</File>
+    <File>ui/dmt_optimizer_popup.xml</File>
     <File>ui/mappinmanager_dmt.lua</File>
     <File>ui/mappinmanager.xml</File>
     <File>ui/mappinpopup_dmt.lua</File>

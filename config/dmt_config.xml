@@ -9,12 +9,14 @@
         <InsertOrIgnore ActionId="AddMapTack" Name="LOC_DMT_OPTIONS_HOTKEY_ADD_MAP_TACK" Description="LOC_DMT_OPTIONS_HOTKEY_ADD_MAP_TACK" CategoryId="DMT" ContextId="World"/>
         <InsertOrIgnore ActionId="DeleteMapTack" Name="LOC_DMT_OPTIONS_HOTKEY_DELETE_MAP_TACK" Description="LOC_DMT_OPTIONS_HOTKEY_DELETE_MAP_TACK" CategoryId="DMT" ContextId="World"/>
         <InsertOrIgnore ActionId="ToggleMapTackVisibility" Name="LOC_DMT_OPTIONS_HOTKEY_TOGGLE_MAP_TACK_VISIBILITY" Description="LOC_DMT_OPTIONS_HOTKEY_TOGGLE_MAP_TACK_VISIBILITY" CategoryId="DMT" ContextId="World"/>
+        <InsertOrIgnore ActionId="OptimizeDistricts" Name="LOC_DMT_OPTIONS_HOTKEY_OPTIMIZE_DISTRICTS" Description="LOC_DMT_OPTIONS_HOTKEY_OPTIMIZE_DISTRICTS" CategoryId="DMT" ContextId="World"/>
     </InputActions>
 
     <InputActionDefaultGestures>
         <InsertOrIgnore ActionId="AddMapTack" Index="0" GestureType="KBMouse" GestureData="LOC_OPTIONS_KEY_SHIFT+LOC_OPTIONS_KEY_A"/>
         <InsertOrIgnore ActionId="DeleteMapTack" Index="0" GestureType="KBMouse" GestureData="LOC_OPTIONS_KEY_SHIFT+LOC_OPTIONS_KEY_D"/>
         <InsertOrIgnore ActionId="ToggleMapTackVisibility" Index="0" GestureType="KBMouse" GestureData="LOC_OPTIONS_KEY_SHIFT+LOC_OPTIONS_KEY_S"/>
+        <InsertOrIgnore ActionId="OptimizeDistricts" Index="0" GestureType="KBMouse" GestureData="LOC_OPTIONS_KEY_SHIFT+LOC_OPTIONS_KEY_O"/>
     </InputActionDefaultGestures>
 
 </GameInfo>
