@@ -62,8 +62,6 @@ The **District Layout Optimizer** solves this for you. Select the districts you 
 
 > **Note:** This feature is part of the Detailed Map Tacks mod. Make sure the mod is enabled via *Additional Content -> Mods* before starting your game.
 
----
-
 ## Getting Started
 
 ### Opening the Optimizer
@@ -72,8 +70,9 @@ Select a city first, then press **Shift + O** (default). The hotkey can be custo
 
 If no city is selected, the optimizer uses your current cursor position as the center. If you hover your cursor over your city or over a tile that has already been claimed by the city, the optimizer will use that city for optimizations.
 
-<!-- ![Screenshot: Opening the optimizer popup](screenshot_open_popup.png) -->
-> *[Placeholder: Two screenshot showing the top of the optimizer popup (with city name and with warning)]*
+![optimizer-with-selected-city](res/optimizer_city_selected.png "Optimizer with selected city") ![optimizer-with-no-city-selected](res/optimizer_no_city_selected.png "Optimizer with no city selected")
+
+---
 
 ### The Optimizer Popup
 
@@ -85,8 +84,7 @@ When the popup opens, you will see:
 - Two **option checkboxes** to fine-tune the optimizer's behavior.
 - **Optimize** and **Cancel** buttons.
 
-<!-- ![Screenshot: The optimizer popup with districts listed](screenshot_popup_ui.png) -->
-> *[Placeholder: Screenshot of the optimizer popup showing the district checklist, weight inputs, and option checkboxes]*
+![optimizer-popup-in-game](res/optimizer_popup_full.png "The Optimizer popup in-game")
 
 ---
 
@@ -147,8 +145,7 @@ Press the **Optimize** button. The optimizer will search for the best layout and
 - **On success:** Place map tacks at the optimal positions. The popup closes automatically.
 - **No valid placement:** If no legal placement exists for the selected districts, a message will tell you so.
 
-<!-- ![Screenshot: Optimizer results on the map](screenshot_results.png) -->
-> *[Placeholder: Screenshot showing the optimized district map tacks placed on the map with yield icons visible]*
+![optimizer-placement-completed](res/optimizer_placement_completed.png "The Optimizer completed the placement")
 
 ---
 
