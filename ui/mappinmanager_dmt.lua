@@ -23,6 +23,7 @@ local m_RememberChoice = true;
 local m_AddMapTackId:number = Input.GetActionId("AddMapTack");
 local m_DeleteMapTackId:number = Input.GetActionId("DeleteMapTack");
 local m_ToggleMapTackVisibilityId:number = Input.GetActionId("ToggleMapTackVisibility");
+local m_OptimizeDistrictsId:number = Input.GetActionId("OptimizeDistricts");
 
 local m_MapPinListBtn = nil;
 local m_MapPinFlags = nil;
@@ -213,7 +214,22 @@ function OnInputActionTriggered(actionId:number)
         DeleteMapPin();
     elseif actionId == m_ToggleMapTackVisibilityId then
         ToggleMapPinVisibility();
+    elseif actionId == m_OptimizeDistrictsId then
+        OpenOptimizer();
     end
+end
+
+function OpenOptimizer()
+    local plotX, plotY;
+    local pCity = UI.GetHeadSelectedCity();
+    if pCity then
+        plotX = pCity:GetX();
+        plotY = pCity:GetY();
+    else
+        plotX, plotY = UI.GetCursorPlotCoord();
+    end
+
+    LuaEvents.DMT_ShowOptimizerPopup(plotX, plotY);
 end
 
 function DMT_Initialize()

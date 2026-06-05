@@ -49,9 +49,20 @@ local DistrictValidTerrain = {};
 
 local ImprovementValidFeature = {};
 local ImprovementValidResource = {};
+local ResourceToImprovement = {};
 
 -- Cache plot features to avoid double calculate within a single update call.
 local m_CachedPlotFeatures = {};
+
+-- Clear the cached plot features. Used by the optimizer between evaluations.
+function ClearPlotFeatureCache()
+    m_CachedPlotFeatures = {};
+end
+
+-- Return cached resource->improvement map.
+function GetResourceToImprovementMap()
+    return ResourceToImprovement;
+end
 
 local m_HiddenPlotsToCheck = {};
 
@@ -1347,8 +1358,17 @@ function InitializeCache()
         ImprovementValidFeature[GetCacheKey(row.ImprovementType, row.FeatureType)] = true;
     end
     ImprovementValidResource = {};
+    ResourceToImprovement = {};
     for row in GameInfo.Improvement_ValidResources() do
         ImprovementValidResource[GetCacheKey(row.ImprovementType, row.ResourceType)] = true;
+        -- Build reverse lookup: resource -> standard improvement.
+        -- Skip civ-unique improvements (those with a TraitType).
+        if not ResourceToImprovement[row.ResourceType] then
+            local impRow = GameInfo.Improvements[row.ImprovementType];
+            if impRow and (impRow.TraitType == nil or impRow.TraitType == "") then
+                ResourceToImprovement[row.ResourceType] = row.ImprovementType;
+            end
+        end
     end
 end
 

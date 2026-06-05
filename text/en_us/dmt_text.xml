@@ -26,5 +26,37 @@
         <Row Tag="LOC_DMT_AUTO_DELETE_MAP_TACK_HINT">
             <Text>Do you want to auto delete map tacks?</Text>
         </Row>
+
+        <!-- Optimizer -->
+        <Row Tag="LOC_DMT_OPTIMIZER_TITLE">
+            <Text>District Layout Optimizer</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_SELECT_DISTRICTS">
+            <Text>Select districts to optimize:</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_NO_CITY">
+            <Text>[COLOR_Civ6Yellow]No city found - using cursor position[ENDCOLOR]</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_NO_DISTRICTS_SELECTED">
+            <Text>Please select at least one district.</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_WORKING">
+            <Text>Optimizing layout...</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_RESULT">
+            <Text>Optimal layout found: {1_Summary}</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_NO_SOLUTION">
+            <Text>No valid placement found for the selected districts.</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_OPTIMIZE">
+            <Text>Optimize</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_ASSUME_IMPROVED">
+            <Text>Assume bonus/luxury/strategic resource tiles are improved with their default improvement (e.g. quarry on stone).</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_RESPECT_PINS">
+            <Text>Respect existing map pins. If this is set, the optimizer will not place districts on tiles with pins and it will not infer resource improvements on tiles with pins.[NEWLINE][COLOR_RED]Warning:[ENDCOLOR] Clear pins set by the optimizer between runs or they will be treated as existing pins and those tiles will be skipped!</Text>
+        </Row>
     </EnglishText>
 </GameData>

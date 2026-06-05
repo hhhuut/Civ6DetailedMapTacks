@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Context>
+    <!-- Optimizer popup panel for selecting districts to optimize -->
+    <Container ID="OptimizerPopup" Hidden="1" Size="parent,parent">
+        <!-- Darkened background overlay -->
+        <Image ID="ScreenOverlay" Size="parent,parent" Texture="Controls_FillSolid" Color="0,0,0,180">
+            <Button ID="OverlayButton" Size="parent,parent" NoDefaultSound="1"/>
+        </Image>
+
+        <!-- Main popup window using 9-slice grid for native Civ6 panel look -->
+        <Grid ID="PopupWindow" Size="420,640" Anchor="C,C" ConsumeMouse="1"
+              Texture="Tracker_OptionsBacking" SliceCorner="55,61" SliceSize="1,1" SliceTextureSize="121,119">
+
+            <Stack ID="MainStack" StackGrowth="Bottom" Anchor="C,T" Offset="0,50" Size="370,parent">
+
+                <!-- Title -->
+                <Label ID="TitleLabel" String="LOC_DMT_OPTIMIZER_TITLE" FontSize="20" FontStyle="Shadow" Color="255,235,180,255" Anchor="C,T" WrapWidth="350"/>
+                <Container Size="370,8"/>
+
+                <!-- City info -->
+                <Label ID="CityLabel" String="" FontSize="14" FontStyle="Shadow" Color="200,210,220,255" Anchor="C,T" WrapWidth="350"/>
+                <Container Size="370,10"/>
+
+                <!-- District checklist -->
+                <Label ID="SelectLabel" String="LOC_DMT_OPTIMIZER_SELECT_DISTRICTS" FontSize="14" FontStyle="Shadow" Color="200,210,220,255" Anchor="L,T" WrapWidth="350"/>
+                <Container Size="370,6"/>
+
+                <!-- Scrollable checklist area -->
+                <Container ID="ChecklistContainer" Size="370,260">
+                    <ScrollPanel ID="ChecklistScrollPanel" Size="parent,parent" AutoScrollBar="1" Vertical="1">
+                        <Stack ID="ChecklistStack" StackGrowth="Bottom" Anchor="L,T" Size="350,0" Padding="2"/>
+                    </ScrollPanel>
+                </Container>
+
+                <!-- Assume resources improved checkbox -->
+                <Container Size="370,6"/>
+                <Container ID="AssumeImprovedContainer" Size="370,52">
+                    <CheckBox ID="AssumeImprovedCheckBox" Anchor="L,T" Size="17,17" Offset="5,4"
+                        ButtonTexture="Controls_Checkbox.dds" ButtonSize="17,17"
+                        CheckTexture="Controls_Checkbox.dds" CheckSize="17,17"
+                        CheckTextureOffset="0,17" IsChecked="1"/>
+                    <Label ID="AssumeImprovedLabel" String="LOC_DMT_OPTIMIZER_ASSUME_IMPROVED"
+                        FontSize="14" FontStyle="Shadow" Color="200,210,220,255" Anchor="L,T"
+                        Offset="28,2" WrapWidth="330"/>
+                </Container>
+
+                <!-- Respect existing pins checkbox -->
+                <Container Size="370,6"/>
+                <Container ID="RespectPinsContainer" Size="370,100">
+                    <CheckBox ID="RespectPinsCheckBox" Anchor="L,T" Size="17,17" Offset="5,4"
+                        ButtonTexture="Controls_Checkbox.dds" ButtonSize="17,17"
+                        CheckTexture="Controls_Checkbox.dds" CheckSize="17,17"
+                        CheckTextureOffset="0,17" IsChecked="1"/>
+                    <Label ID="RespectPinsLabel" String="LOC_DMT_OPTIMIZER_RESPECT_PINS"
+                        FontSize="14" FontStyle="Shadow" Color="200,210,220,255" Anchor="L,T"
+                        Offset="28,2" WrapWidth="330"/>
+                </Container>
+
+                <!-- Result display -->
+                <Container Size="370,6"/>
+                <Label ID="ResultLabel" String="" FontSize="14" FontStyle="Shadow" Color="200,210,220,255" Anchor="L,T" WrapWidth="350"/>
+
+                <!-- Buttons -->
+                <Container Size="370,10"/>
+                <Stack ID="ButtonStack" StackGrowth="Right" Anchor="C,T" Padding="10">
+                    <GridButton ID="OptimizeButton" Size="160,32" String="LOC_DMT_OPTIMIZER_OPTIMIZE"
+                        Texture="Controls_ButtonControl.dds" SliceCorner="10,10" SliceSize="1,1" SliceTextureSize="24,24"
+                        StateOffsetIncrement="0,24" FontSize="14" FontStyle="Shadow"/>
+                    <GridButton ID="CloseButton" Size="160,32" String="LOC_CANCEL"
+                        Texture="Controls_ButtonControl.dds" SliceCorner="10,10" SliceSize="1,1" SliceTextureSize="24,24"
+                        StateOffsetIncrement="0,24" FontSize="14" FontStyle="Shadow"/>
+                </Stack>
+            </Stack>
+        </Grid>
+    </Container>
+
+    <!-- Instance template for each district checkbox entry -->
+    <Instance Name="DistrictCheckboxInstance">
+        <Container Size="350,30">
+            <CheckBox ID="DistrictCheckBox" Anchor="L,C" Size="17,17" Offset="5,0"
+                ButtonTexture="Controls_Checkbox.dds" ButtonSize="17,17"
+                CheckTexture="Controls_Checkbox.dds" CheckSize="17,17"
+                CheckTextureOffset="0,17"/>
+            <Label ID="DistrictLabel" String="" FontSize="14" FontStyle="Shadow" Color="200,210,220,255" Anchor="L,C" Offset="28,0"/>
+            <EditBox ID="WeightInput" Size="55,26" Anchor="R,C" Offset="0,0" FontSize="14"
+                     MaxCharacters="4" String="1" NumberInput="1"/>
+        </Container>
+    </Instance>
+</Context>
