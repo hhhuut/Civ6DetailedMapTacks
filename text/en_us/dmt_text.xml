@@ -61,5 +61,11 @@
         <Row Tag="LOC_DMT_OPTIMIZER_RESPECT_PINS">
             <Text>Respect existing map pins. If this is set, the optimizer will not place districts on tiles with pins and it will not infer resource improvements on tiles with pins.[NEWLINE][COLOR_RED]Warning:[ENDCOLOR] Clear pins set by the optimizer between runs or they will be treated as existing pins and those tiles will be skipped!</Text>
         </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_ALREADY_BUILT">
+            <Text>[COLOR_Civ6Yellow]Already built[ENDCOLOR]</Text>
+        </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_NO_VALID_TILES">
+            <Text>[COLOR_Civ6Yellow]No valid tiles[ENDCOLOR]</Text>
+        </Row>
     </EnglishText>
 </GameData>

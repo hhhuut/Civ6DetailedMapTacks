@@ -71,17 +71,33 @@ function PopulateDistrictChecklist(playerID)
 
     local districtTypes = GetPlaceableDistrictTypes(playerID);
 
+    -- Check availability of each district (already built / no valid tiles).
+    local availability = GetDistrictAvailability(playerID, m_CityX, m_CityY, districtTypes, m_RespectPins);
+
     for _, districtInfo in ipairs(districtTypes) do
         local instance = {};
         ContextPtr:BuildInstanceForControl("DistrictCheckboxInstance", instance, Controls.ChecklistStack);
-        
-        instance.DistrictLabel:SetText(districtInfo.Name);
+
+        local avail = availability[districtInfo.DistrictType];
+        local isDisabled = avail and not avail.available;
+        local labelText = districtInfo.Name;
+
+        if isDisabled then
+            -- Disable the checkbox and weight input.
+            instance.DistrictCheckBox:SetDisabled(true);
+            instance.WeightInput:SetDisabled(true);
+            -- Append reason.
+            labelText = labelText .. " (" .. avail.reason .. ")";
+        else
+            instance.DistrictCheckBox:RegisterCallback(Mouse.eLClick, function()
+                local isChecked = not instance.DistrictCheckBox:IsSelected();
+                instance.DistrictCheckBox:SetSelected(isChecked);
+                m_SelectedDistricts[districtInfo.DistrictType] = isChecked or nil;
+            end);
+        end
+
+        instance.DistrictLabel:SetText(labelText);
         instance.DistrictCheckBox:SetSelected(false);
-        instance.DistrictCheckBox:RegisterCallback(Mouse.eLClick, function()
-            local isChecked = not instance.DistrictCheckBox:IsSelected();
-            instance.DistrictCheckBox:SetSelected(isChecked);
-            m_SelectedDistricts[districtInfo.DistrictType] = isChecked or nil;
-        end);
 
         m_CheckboxInstances[districtInfo.DistrictType] = instance;
     end

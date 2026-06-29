@@ -144,28 +144,7 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
     -- Step 3: For each district type, find valid candidate positions.
     local candidates = {};
     for _, districtType in ipairs(districtTypes) do
-        candidates[districtType] = {};
-        for _, plot in ipairs(candidatePlots) do
-            local px, py = plot:GetX(), plot:GetY();
-            local cacheKey = px .. "_" .. py;
-            -- Skip tiles that already have a built district or an existing pin.
-            if not usedTiles[cacheKey] and not pinnedTiles[cacheKey] then
-                -- Clear cache before each check to prevent cross-contamination.
-                -- CanPlacePin (via IsValidDamPosition etc.) can cache other plots
-                -- with hypothetical district data that poisons subsequent checks.
-                ClearPlotFeatureCache();
-                local pinSubject = {
-                    Key = districtType,
-                    X = px,
-                    Y = py,
-                    Type = OPT_MAP_PIN_TYPES.DISTRICT,
-                };
-                local canPlace = CanPlacePin(playerID, pinSubject);
-                if canPlace then
-                    table.insert(candidates[districtType], {X = px, Y = py});
-                end
-            end
-        end
+        candidates[districtType] = GetCandidateTilesForDistrict(playerID, districtType, candidatePlots, usedTiles, pinnedTiles);
     end
 
     -- Step 4: Sort districts by fewest candidates first (most-constrained-first).
@@ -274,6 +253,103 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
     m_VirtualPins = {};
 
     return bestConfig, bestScore, bestYields;
+end
+
+-- Find valid candidate tiles for a single district type.
+-- Shared by the optimizer search and the UI availability pre-check.
+--
+-- Params:
+--     playerID:       id of the player.
+--     districtType:   district type string, e.g. "DISTRICT_CAMPUS".
+--     candidatePlots: array of plot objects to consider.
+--     usedTiles:      set of "x_y" keys for tiles already occupied.
+--     pinnedTiles:    set of "x_y" keys for tiles with existing pins.
+-- Return:
+--     array of {X, Y} tables for valid placement positions.
+function GetCandidateTilesForDistrict(playerID, districtType, candidatePlots, usedTiles, pinnedTiles)
+    local results = {};
+    for _, plot in ipairs(candidatePlots) do
+        local px, py = plot:GetX(), plot:GetY();
+        local cacheKey = px .. "_" .. py;
+        -- Skip tiles that already have a built district or an existing pin.
+        if not usedTiles[cacheKey] and not pinnedTiles[cacheKey] then
+            -- Clear cache before each check to prevent cross-contamination.
+            -- CanPlacePin (via IsValidDamPosition etc.) can cache other plots
+            -- with hypothetical district data that poisons subsequent checks.
+            ClearPlotFeatureCache();
+            local pinSubject = {
+                Key = districtType,
+                X = px,
+                Y = py,
+                Type = OPT_MAP_PIN_TYPES.DISTRICT,
+            };
+            local canPlace = CanPlacePin(playerID, pinSubject);
+            if canPlace then
+                table.insert(results, {X = px, Y = py});
+            end
+        end
+    end
+    return results;
+end
+
+-- Check availability of each district type for the optimizer popup.
+-- Determines whether each district can be selected (not already built as
+-- one-per-city, and has at least one valid candidate tile).
+--
+-- Params:
+--     playerID:       id of the player.
+--     cityX, cityY:   coordinates of the city center.
+--     districtTypes:  array of {DistrictType, Name} tables from GetPlaceableDistrictTypes.
+--     respectPins:    boolean, whether to respect existing map pins.
+-- Return:
+--     table of districtType => {available = bool, reason = string|nil}.
+function GetDistrictAvailability(playerID, cityX, cityY, districtTypes, respectPins)
+    local availability = {};
+
+    -- Get candidate plots within 3-tile radius.
+    local candidatePlots = GetPlotsWithinXTiles(cityX, cityY, 3);
+
+    -- Build usedTiles set and count built districts by type.
+    local usedTiles = {};
+    local builtDistricts = {};
+    for _, plot in ipairs(candidatePlots) do
+        local px, py = plot:GetX(), plot:GetY();
+        local districtIndex = plot:GetDistrictType();
+        if districtIndex ~= -1 then
+            local dt = GameInfo.Districts[districtIndex].DistrictType;
+            usedTiles[px .. "_" .. py] = true;
+            builtDistricts[dt] = (builtDistricts[dt] or 0) + 1;
+        end
+    end
+
+    -- Build pinned tiles set.
+    local pinnedTiles = {};
+    if respectPins then
+        local playerPins = PlayerConfigurations[playerID]:GetMapPins();
+        for _, mapPinCfg in pairs(playerPins) do
+            pinnedTiles[mapPinCfg:GetHexX() .. "_" .. mapPinCfg:GetHexY()] = true;
+        end
+    end
+
+    for _, districtInfo in ipairs(districtTypes) do
+        local districtType = districtInfo.DistrictType;
+        local districtRow = GameInfo.Districts[districtType];
+
+        -- Check if one-per-city and already built.
+        if districtRow and districtRow.OnePerCity and builtDistricts[districtType] then
+            availability[districtType] = {available = false, reason = Locale.Lookup("LOC_DMT_OPTIMIZER_ALREADY_BUILT")};
+        else
+            -- Check if there are any valid candidate tiles.
+            local candidates = GetCandidateTilesForDistrict(playerID, districtType, candidatePlots, usedTiles, pinnedTiles);
+            if #candidates == 0 then
+                availability[districtType] = {available = false, reason = Locale.Lookup("LOC_DMT_OPTIMIZER_NO_VALID_TILES")};
+            else
+                availability[districtType] = {available = true, reason = nil};
+            end
+        end
+    end
+
+    return availability;
 end
 
 -- Evaluate the total adjacency yield score for a configuration of districts.
