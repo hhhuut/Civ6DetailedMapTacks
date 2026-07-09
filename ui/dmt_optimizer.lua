@@ -271,8 +271,9 @@ function GetCandidateTilesForDistrict(playerID, districtType, candidatePlots, us
     for _, plot in ipairs(candidatePlots) do
         local px, py = plot:GetX(), plot:GetY();
         local cacheKey = px .. "_" .. py;
-        -- Skip tiles that already have a built district or an existing pin.
-        if not usedTiles[cacheKey] and not pinnedTiles[cacheKey] then
+        -- Skip tiles that already have a built district, an existing pin or are owned by another player.
+        local isOwnedByOthers = plot:IsOwned() and plot:GetOwner() ~= playerID;
+        if not usedTiles[cacheKey] and not pinnedTiles[cacheKey] and not isOwnedByOthers then
             -- Clear cache before each check to prevent cross-contamination.
             -- CanPlacePin (via IsValidDamPosition etc.) can cache other plots
             -- with hypothetical district data that poisons subsequent checks.
@@ -290,6 +291,18 @@ function GetCandidateTilesForDistrict(playerID, districtType, candidatePlots, us
         end
     end
     return results;
+end
+
+-- Count how many districts of a given type the player has built empire-wide.
+local function CountPlayerDistrictsByType(playerID, districtIndex)
+    local playerDistricts = Players[playerID]:GetDistricts();
+    local count = 0;
+    for _, district in playerDistricts:Members() do
+        if district and district:GetType() == districtIndex then
+            count = count + 1;
+        end
+    end
+    return count;
 end
 
 -- Check availability of each district type for the optimizer popup.
@@ -335,9 +348,13 @@ function GetDistrictAvailability(playerID, cityX, cityY, districtTypes, respectP
         local districtType = districtInfo.DistrictType;
         local districtRow = GameInfo.Districts[districtType];
 
-        -- Check if one-per-city and already built.
+        -- Check if one-per-city and already built in this city.
         if districtRow and districtRow.OnePerCity and builtDistricts[districtType] then
             availability[districtType] = {available = false, reason = Locale.Lookup("LOC_DMT_OPTIMIZER_ALREADY_BUILT")};
+        -- Check if max-per-player and already built in the empire.
+        elseif districtRow and districtRow.MaxPerPlayer and districtRow.MaxPerPlayer > 0
+               and CountPlayerDistrictsByType(playerID, districtRow.Index) >= districtRow.MaxPerPlayer then
+            availability[districtType] = {available = false, reason = Locale.Lookup("LOC_DMT_OPTIMIZER_ALREADY_BUILT_CIV")};
         else
             -- Check if there are any valid candidate tiles.
             local candidates = GetCandidateTilesForDistrict(playerID, districtType, candidatePlots, usedTiles, pinnedTiles);
