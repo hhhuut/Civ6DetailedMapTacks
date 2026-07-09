@@ -322,16 +322,32 @@ function GetDistrictAvailability(playerID, cityX, cityY, districtTypes, respectP
     -- Get candidate plots within 3-tile radius.
     local candidatePlots = GetPlotsWithinXTiles(cityX, cityY, 3);
 
-    -- Build usedTiles set and count built districts by type.
+    -- Build usedTiles set from plot radius (includes districts from any city).
     local usedTiles = {};
-    local builtDistricts = {};
     for _, plot in ipairs(candidatePlots) do
         local px, py = plot:GetX(), plot:GetY();
         local districtIndex = plot:GetDistrictType();
         if districtIndex ~= -1 then
-            local dt = GameInfo.Districts[districtIndex].DistrictType;
             usedTiles[px .. "_" .. py] = true;
-            builtDistricts[dt] = (builtDistricts[dt] or 0) + 1;
+        end
+    end
+
+    -- Build builtDistricts set from the actual city's district collection,
+    -- not from plot radius, so neighboring cities' districts don't count.
+    local builtDistricts = {};
+    local player = Players[playerID];
+    local playerCities = player:GetCities();
+    for _, city in playerCities:Members() do
+        if city:GetX() == cityX and city:GetY() == cityY then
+            local cityDistricts = city:GetDistricts();
+            for _, districtInfo in ipairs(districtTypes) do
+                local dt = districtInfo.DistrictType;
+                local districtRow = GameInfo.Districts[dt];
+                if districtRow and cityDistricts:HasDistrict(districtRow.Index) then
+                    builtDistricts[dt] = true;
+                end
+            end
+            break;
         end
     end
 
