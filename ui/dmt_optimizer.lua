@@ -560,7 +560,7 @@ end
 local function GetPinIconName(districtKey)
     local icon = "ICON_" .. districtKey;
     if icon == "ICON_DISTRICT_THEATER" or icon == "ICON_DISTRICT_THEATER_SQUARE" then
-        return "ICON_MAP_PIN_DISTRICT_THEATER";
+        return "ICON_DISTRICT_THEATER";
     end
     return icon;
 end
