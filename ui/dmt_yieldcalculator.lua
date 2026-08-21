@@ -207,7 +207,11 @@ function CanPlacePin(playerID:number, pinSubject:table)
     if not CanPlaceOnTerrain(pinType, pinKey, features[AdjacencyBonusTypes.ADJACENCY_TERRAIN]) then
         -- Check if the pin can be placed on the given terrain.
         canPlace = false;
-        table.insert(reasons, GetCannotPlaceReasonString(GameInfo.Terrains[features[AdjacencyBonusTypes.ADJACENCY_TERRAIN]].Name));
+        if features[AdjacencyBonusTypes.ADJACENCY_TERRAIN] == nil then
+            table.insert(reasons, Locale.Lookup("LOC_DMT_MUST_PLACE_ON_CORRECT_TERRAIN_REASON"));
+        else
+            table.insert(reasons, GetCannotPlaceReasonString(GameInfo.Terrains[features[AdjacencyBonusTypes.ADJACENCY_TERRAIN]].Name));
+        end
     end
 
     -- Other checks.

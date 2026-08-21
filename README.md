@@ -180,6 +180,8 @@ Each candidate layout is scored by calculating **adjacency bonuses** for every p
 - Adjacency from other districts in the layout (e.g., placing a Commercial Hub next to a Harbor)
 - Adjacency from existing built districts, improvements and existing map pins
 
+> **Note**: Unrevealed plots are rarely taken into account since their adjacency features are all nil, producing a score of 0. For the best experience it is recommended to have a radius of 4 tiles from your city center revealed, especially early in the game (e.g. when planning the first city).
+
 ### Scoring & Weights
 
 All yield amounts are summed into a single score. Each district's yields are multiplied by its weight before being added. The layout with the highest total score wins.
