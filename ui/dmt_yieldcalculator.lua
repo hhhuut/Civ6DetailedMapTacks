@@ -1137,6 +1137,38 @@ function GroupSameToolTips(bonusYieldToolTipsRaw:table)
     return bonusYieldToolTips;
 end
 
+-- Check if the given Adjacency_YieldChanges ID applies to the player at all, independent of the plot.
+--
+-- Return: false if the player doesn't have its prereq tech/civic, has its obsolete tech/civic,
+--         or has a trait that excludes it (GameInfo.ExcludedAdjacencies). Otherwise true.
+function IsAdjacencyApplicable(adjID:string, playerID:number)
+    local row = GameInfo.Adjacency_YieldChanges[adjID];
+
+    -- Check if this adjacency doesn't apply to the player due to tech or civic.
+    local player = Players[playerID];
+    if (row.PrereqTech and not player:GetTechs():HasTech(GameInfo.Technologies[row.PrereqTech].Index))
+        or (row.ObsoleteTech and player:GetTechs():HasTech(GameInfo.Technologies[row.ObsoleteTech].Index))
+        or (row.PrereqCivic and not player:GetCulture():HasCivic(GameInfo.Civics[row.PrereqCivic].Index))
+        or (row.ObsoleteCivic and player:GetCulture():HasCivic(GameInfo.Civics[row.ObsoleteCivic].Index)) then
+            return false;
+    end
+
+    -- Check if this adjacency doesn't apply to the player due to GameInfo.ExcludedAdjacencies.
+    for excludeRow in GameInfo.ExcludedAdjacencies() do
+        if excludeRow.YieldChangeId == adjID then
+            local playerConfig = PlayerConfigurations[playerID];
+            local civName = playerConfig:GetCivilizationTypeName();
+            local leaderName = playerConfig:GetLeaderTypeName();
+            local traitName = excludeRow.TraitType;
+            if CivilizationHasTrait(civName, traitName) or LeaderHasTrait(leaderName, traitName) then
+                return false;
+            end
+        end
+    end
+
+    return true;
+end
+
 -- Calculate yields for the given Adjacency_YieldChanges ID and aggregated features the surrounding plots have.
 --
 -- Params:
@@ -1149,36 +1181,18 @@ end
 --                       }
 --                       ...
 --                  }
+--     skipApplicabilityCheck: optional, true if the caller already filtered adjID with IsAdjacencyApplicable.
 -- Return: the yield type, amount, and tooltip key for the given Adjacency_YieldChanges ID.
 -- Example: "YIELD_GOLD", 10, "LOC_DISTRICT_CITY_CENTER_GOLD"
-function CalculateYieldFromAdjacency(adjID:string, adjFeatures:table, playerID:number, plot:table)
+function CalculateYieldFromAdjacency(adjID:string, adjFeatures:table, playerID:number, plot:table, skipApplicabilityCheck:boolean)
     local row = GameInfo.Adjacency_YieldChanges[adjID];
     local yieldType = row.YieldType;
     local yieldAmount = 0;
     local yieldToolTipKey = row.Description;
 
-    -- Check if this adjacency doesn't apply to the player due to tech or civic.
-    local player = Players[playerID];
-    if (row.PrereqTech and not player:GetTechs():HasTech(GameInfo.Technologies[row.PrereqTech].Index))
-        or (row.ObsoleteTech and player:GetTechs():HasTech(GameInfo.Technologies[row.ObsoleteTech].Index))
-        or (row.PrereqCivic and not player:GetCulture():HasCivic(GameInfo.Civics[row.PrereqCivic].Index))
-        or (row.ObsoleteCivic and player:GetCulture():HasCivic(GameInfo.Civics[row.ObsoleteCivic].Index)) then
-            -- If the player doesn't have prereq or has obsolete, simply return 0 as the amount and skip the check.
-            return yieldType, yieldAmount, yieldToolTipKey;
-    end
-
-    -- Check if this adjacency doesn't apply to the player due to GameInfo.ExcludedAdjacencies.
-    for excludeRow in GameInfo.ExcludedAdjacencies() do
-        if excludeRow.YieldChangeId == adjID then
-            local playerConfig = PlayerConfigurations[playerID];
-            local civName = playerConfig:GetCivilizationTypeName();
-            local leaderName = playerConfig:GetLeaderTypeName();
-            local traitName = excludeRow.TraitType;
-            if CivilizationHasTrait(civName, traitName) or LeaderHasTrait(leaderName, traitName) then
-                -- If the player doesn't apply to this adj yield due to trait, simply return 0 as the amount and skip the check.
-                return yieldType, yieldAmount, yieldToolTipKey;
-            end
-        end
+    -- If this adjacency doesn't apply to the player due to tech, civic or trait, simply return 0 as the amount and skip the check.
+    if not skipApplicabilityCheck and not IsAdjacencyApplicable(adjID, playerID) then
+        return yieldType, yieldAmount, yieldToolTipKey;
     end
 
     -- Check any yield from itself. Like DISTRICT_SEOWON.

@@ -38,6 +38,12 @@ function GetMapPinSubject(playerID:number, posX:number, posY:number)
     return mapPinSubjectTable[GetMapPinSubjectCacheKey(posX, posY)];
 end
 
+-- Get all MapPinSubjects keyed by GetMapPinSubjectCacheKey(posX, posY).
+-- Each GetMapPinSubject() call deserializes the whole table, so use this for many lookups in a row.
+function GetMapPinSubjectTable(playerID:number)
+    return LoadMapPinSubjectTable(playerID, MAIN_CACHE_KEY) or {};
+end
+
 -- Get adjacent pins for the given position.
 function GetAdjacentMapPinSubjects(playerID:number, posX:number, posY:number)
     local mapPinSubjectTable = LoadMapPinSubjectTable(playerID, MAIN_CACHE_KEY) or {};

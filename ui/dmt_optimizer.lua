@@ -24,6 +24,11 @@ local MAX_SEARCH_ITERATIONS = 100000;
 -- =======================================================================
 -- Virtual pin lookup: "x_y" => pinSubject, used during optimization search.
 local m_VirtualPins = {};
+-- Stored pin lookup: "x_y" => pinSubject, loaded once per optimization run.
+-- GetMapPinSubject() deserializes all stored pins on every call, which is too slow for the search.
+local m_StoredPins = {};
+-- District type => Adjacency_YieldChanges IDs that apply to the player, cached per optimization run.
+local m_ApplicableYieldChanges = {};
 
 -- =======================================================================
 -- Public API
@@ -89,7 +94,7 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
     end
 
     -- Existing pins are taken into account: GetBonusYieldsWithVirtualPins falls back to
-    -- GetMapPinSubject(playerID, ...) for any adjacent plot not in m_VirtualPins.
+    -- m_StoredPins for any adjacent plot not in m_VirtualPins.
 
     -- Build a set of tiles which already have any map pin placed on them.
     -- Uses GetMapPins() to avoid GetMapPin(x,y) which has a create-on-access side effect.
@@ -185,6 +190,10 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
         m_VirtualPins[key] = pin;
     end
 
+    -- Stored pins, techs, civics and traits can't change during the search, so look them up once per run.
+    m_StoredPins = GetMapPinSubjectTable(playerID);
+    m_ApplicableYieldChanges = {};
+
     local function Search(districtIndex, usedSearchTiles)
         if searchIterations >= MAX_SEARCH_ITERATIONS then
             return;
@@ -221,6 +230,8 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
                 };
                 table.insert(currentConfig, pinSubject);
                 usedSearchTiles[cacheKey] = true;
+                -- Remember the pin this district covers (e.g. an inferred improvement) to restore it on backtrack.
+                local coveredPin = m_VirtualPins[cacheKey];
                 m_VirtualPins[cacheKey] = pinSubject;
 
                 -- Recurse to place next district.
@@ -229,7 +240,7 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
                 -- Backtrack.
                 table.remove(currentConfig);
                 usedSearchTiles[cacheKey] = nil;
-                m_VirtualPins[cacheKey] = nil;
+                m_VirtualPins[cacheKey] = coveredPin;
 
                 if searchIterations >= MAX_SEARCH_ITERATIONS then
                     return;
@@ -251,6 +262,8 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
 
     -- Clean up.
     m_VirtualPins = {};
+    m_StoredPins = {};
+    m_ApplicableYieldChanges = {};
 
     return bestConfig, bestScore, bestYields;
 end
@@ -416,9 +429,25 @@ function EvaluateConfiguration(playerID, config, districtWeights)
     return totalScore, totalYields;
 end
 
--- Calculate bonus yields for a pin using virtual pin lookup instead of stored pins.
+-- Get the Adjacency_YieldChanges IDs of the given district that apply to the player.
+-- Cached per optimization run, since the player's techs, civics and traits can't change during the search.
+local function GetApplicableYieldChanges(playerID, districtType)
+    local yieldChanges = m_ApplicableYieldChanges[districtType];
+    if yieldChanges == nil then
+        yieldChanges = {};
+        for _, adjID in ipairs(GetYieldChangesForDistrict(playerID, districtType)) do
+            if IsAdjacencyApplicable(adjID, playerID) then
+                table.insert(yieldChanges, adjID);
+            end
+        end
+        m_ApplicableYieldChanges[districtType] = yieldChanges;
+    end
+    return yieldChanges;
+end
+
+-- Calculate bonus yields for a pin using the virtual pin lookup, falling back to the stored pins.
 -- This is a simplified version of GetBonusYields that skips tooltip generation
--- for performance and uses m_VirtualPins for adjacency resolution.
+-- for performance. Only valid during OptimizeDistrictLayout, since it relies on the per-run lookups.
 --
 -- Params:
 --     playerID:   id of the player.
@@ -435,7 +464,7 @@ function GetBonusYieldsWithVirtualPins(playerID, pinSubject)
         if plot ~= nil then
             -- Look up virtual pin first, then fall back to stored pin.
             local adjCacheKey = plot:GetX() .. "_" .. plot:GetY();
-            local adjPinSubject = m_VirtualPins[adjCacheKey] or GetMapPinSubject(playerID, plot:GetX(), plot:GetY());
+            local adjPinSubject = m_VirtualPins[adjCacheKey] or m_StoredPins[adjCacheKey];
 
             local features = GetRealizedPlotFeatures(playerID, plot, adjPinSubject);
             for adjType, adjTarget in pairs(features) do
@@ -447,10 +476,8 @@ function GetBonusYieldsWithVirtualPins(playerID, pinSubject)
 
     -- Calculate adjacency yields.
     local bonusYields = {};
-    local yieldChanges = GetYieldChangesForDistrict(playerID, pinSubject.Key);
-
-    for _, adjID in ipairs(yieldChanges) do
-        local yieldType, yieldAmount = CalculateYieldFromAdjacency(adjID, allFeatures, playerID, currentPlot);
+    for _, adjID in ipairs(GetApplicableYieldChanges(playerID, pinSubject.Key)) do
+        local yieldType, yieldAmount = CalculateYieldFromAdjacency(adjID, allFeatures, playerID, currentPlot, true);
         if yieldAmount ~= 0 then
             bonusYields[yieldType] = (bonusYields[yieldType] or 0) + yieldAmount;
         end
