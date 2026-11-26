@@ -234,6 +234,45 @@ function IsSpecialtyDistrict(districtType:string)
     return districtRow and districtRow.RequiresPopulation;
 end
 
+-- Get the modifiers that apply to the given district pin, including the ones of the district it replaces.
+-- Doesn't depend on what is on the adjacent plots.
+--
+-- Params:
+--     pinSubject: map pin subject to check.
+-- Return: a list of the active modifier subjects, and the mirror type modifiers among them (see GetDistrictMirrorTypeFromModifier).
+function GetActiveDistrictModifiers(pinSubject:table, playerID:number)
+    local activeModifiers = {};
+    local yieldMirrorTable = {};
+
+    local modifiers = m_GroupedModifiers[pinSubject.Key] or {};
+    for modifierId, modifierSubject in pairs(modifiers) do
+        if ShouldActivateModifier(playerID, modifierSubject, pinSubject) then
+            table.insert(activeModifiers, modifierSubject);
+
+            -- "Mirror yield" type modifiers.
+            local mirrorType = GetDistrictMirrorTypeFromModifier(modifierSubject);
+            if mirrorType ~= nil then
+                table.insert(yieldMirrorTable, mirrorType);
+            end
+        end
+    end
+
+    -- If the pin represents a replacement district, add the replaced district's modifiers.
+    if GameInfo.DistrictReplaces[pinSubject.Key] then
+        local newPinSubject = CopyPinSubject(pinSubject); -- Quick copy original pin to a new one.
+        newPinSubject.Key = GameInfo.DistrictReplaces[pinSubject.Key].ReplacesDistrictType;
+        local replaceModifiers, replaceMirrorTable = GetActiveDistrictModifiers(newPinSubject, playerID);
+        for _, modifierSubject in ipairs(replaceModifiers) do
+            table.insert(activeModifiers, modifierSubject);
+        end
+        for _, mirrorType in ipairs(replaceMirrorTable) do
+            table.insert(yieldMirrorTable, mirrorType);
+        end
+    end
+
+    return activeModifiers, yieldMirrorTable;
+end
+
 -- Calculate yields for the given district from the modifiers and the aggregated features surrounding plots have.
 --
 -- Params:
@@ -252,55 +291,33 @@ end
 -- }
 function CalculateDistrictYieldFromModifiers(pinSubject:table, adjFeatures:table, adjYields:table, playerID:number)    
     local yieldTables = {};
-    local yieldMirrorTable = {};
 
-    local modifiers = m_GroupedModifiers[pinSubject.Key] or {};
-    for modifierId, modifierSubject in pairs(modifiers) do
-        if ShouldActivateModifier(playerID, modifierSubject, pinSubject) then
-            -- Basic modifiers calculation.
-            local yieldTable = CalculateDistrictYieldFromSingleModifier(modifierSubject, pinSubject, adjFeatures, adjYields, playerID);
-            if yieldTable.Amount ~= 0 then
-                table.insert(yieldTables, yieldTable);
-            end
-
-            -- "Mirror yield" type modifiers.
-            local mirrorType = GetDistrictMirrorTypeFromModifier(modifierSubject);
-            if mirrorType ~= nil then
-                table.insert(yieldMirrorTable, mirrorType);
-            end
-        end
-    end
-
-    -- If the pin represents a replacement district, add the placement district's yields.
-    if GameInfo.DistrictReplaces[pinSubject.Key] then
-        local newPinSubject = CopyPinSubject(pinSubject); -- Quick copy original pin to a new one.
-        newPinSubject.Key = GameInfo.DistrictReplaces[pinSubject.Key].ReplacesDistrictType;
-        local replaceYieldTables, replaceMirrorTable = CalculateDistrictYieldFromModifiers(newPinSubject, adjFeatures, adjYields, playerID);
-        for _, yieldTable in ipairs(replaceYieldTables) do
+    local activeModifiers, yieldMirrorTable = GetActiveDistrictModifiers(pinSubject, playerID);
+    for _, modifierSubject in ipairs(activeModifiers) do
+        -- Basic modifiers calculation.
+        local yieldTable = CalculateDistrictYieldFromSingleModifier(modifierSubject, pinSubject, adjFeatures, adjYields, playerID);
+        if yieldTable.Amount ~= 0 then
             table.insert(yieldTables, yieldTable);
-        end
-        for _, mirrorType in ipairs(replaceMirrorTable) do
-            table.insert(yieldMirrorTable, mirrorType);
         end
     end
 
     return yieldTables, yieldMirrorTable;
 end
 
--- Get yield for the given modifier by calculating the adjacent features and yields.
---
--- Return: a table containing yield type, amount, and tooltip for the given modifier.
-function CalculateDistrictYieldFromSingleModifier(modifierSubject:table, pinSubject:table, adjFeatures:table, adjYields:table, playerID:number)
+-- Get the yield rule of the given modifier for the given district pin.
+-- Same format as GetAdjacencyYieldRule (see the YieldRule definition in dmt_yieldcalculator.lua).
+function GetModifierYieldRule(modifierSubject:table, pinSubject:table, playerID:number)
     local arguments = modifierSubject.Arguments;
-    local result = {
-        Type = arguments.YieldType,
+    local rule = {
+        YieldType = arguments.YieldType,
+        ToolTip = arguments.Description or DEFAULT_MODIFIER_TOOLTIP_KEY,
         Amount = 0,
-        ToolTip = arguments.Description or DEFAULT_MODIFIER_TOOLTIP_KEY
+        TilesRequired = 1,
     };
 
-    if adjFeatures == nil then return result; end
-
     local effectType = modifierSubject.EffectType;
+    -- Modifier arguments can be strings.
+    local amount = tonumber(arguments.Amount) or 0;
 
     -- =================================
     -- District related effect type.
@@ -308,32 +325,16 @@ function CalculateDistrictYieldFromSingleModifier(modifierSubject:table, pinSubj
     if effectType == "EFFECT_RIVER_ADJACENCY" then
         local plot = Map.GetPlot(pinSubject.X, pinSubject.Y);
         if plot:IsRiver() and PlayersVisibility[playerID]:IsRevealed(plot:GetIndex()) then
-            result.Amount = arguments.Amount;
+            rule.Amount = amount;
         end
-        return result;
+        return rule;
     end
 
     if effectType == "EFFECT_DISTRICT_ADJACENCY" then
-        local adjList = adjFeatures[AdjacencyBonusTypes.ADJACENCY_DISTRICT];
-        if adjList then
-            -- Get total number of adjacency items to count.
-            local totalCount = 0;
-            for type, count in pairs(adjList) do
-                totalCount = totalCount + count;
-            end
-            -- Check if any district is owned by others.
-            local nonOwnerDistricts = adjFeatures["NON_OWNER_DISTRICT"];
-            if nonOwnerDistricts then
-                local nonOwnerCount = 0;
-                for type, count in pairs(nonOwnerDistricts) do
-                    nonOwnerCount = nonOwnerCount + count;
-                end
-                totalCount = totalCount - nonOwnerCount;
-            end
-            -- Get yield.
-            result.Amount = arguments.Amount * totalCount;
-        end
-        return result;
+        rule.Amount = amount;
+        rule.AdjType = AdjacencyBonusTypes.ADJACENCY_DISTRICT;
+        rule.ExcludeNonOwner = true;
+        return rule;
     end
 
     -- Group similar calculation together.
@@ -350,15 +351,13 @@ function CalculateDistrictYieldFromSingleModifier(modifierSubject:table, pinSubj
         adjTarget = arguments.TerrainType;
     end
     if adjType then
-        local adjList = adjFeatures[adjType];
-        if adjList then
-            local count = adjList[adjTarget];
-            if count then
-                local tilesRequired = arguments.TilesRequired or 1;
-                result.Amount = arguments.Amount * math.floor(count / tilesRequired);
-            end
+        if adjTarget ~= nil then
+            rule.Amount = amount;
+            rule.TilesRequired = tonumber(arguments.TilesRequired) or 1;
+            rule.AdjType = adjType;
+            rule.AdjTarget = adjTarget;
         end
-        return result;
+        return rule;
     end
 
     -- =================================
@@ -368,6 +367,22 @@ function CalculateDistrictYieldFromSingleModifier(modifierSubject:table, pinSubj
 
     -- end
 
+    return rule;
+end
+
+-- Get yield for the given modifier by calculating the adjacent features and yields.
+--
+-- Return: a table containing yield type, amount, and tooltip for the given modifier.
+function CalculateDistrictYieldFromSingleModifier(modifierSubject:table, pinSubject:table, adjFeatures:table, adjYields:table, playerID:number)
+    local rule = GetModifierYieldRule(modifierSubject, pinSubject, playerID);
+    local result = {
+        Type = rule.YieldType,
+        Amount = 0,
+        ToolTip = rule.ToolTip
+    };
+    if adjFeatures ~= nil then
+        result.Amount = CalculateYieldRuleAmount(rule, CountYieldRuleMatches(rule, adjFeatures));
+    end
     return result;
 end
 

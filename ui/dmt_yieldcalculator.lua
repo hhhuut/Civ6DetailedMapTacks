@@ -1026,13 +1026,7 @@ function GetBonusYields(playerID:number, pinSubject:table)
     for i, plot in pairs(adjPlots) do
         if plot ~= nil then
             local adjPinSubject = GetMapPinSubject(playerID, plot:GetX(), plot:GetY());
-
-            local features = GetRealizedPlotFeatures(playerID, plot, adjPinSubject);
-            for adjType, adjTarget in pairs(features) do
-                allFeatures[adjType] = allFeatures[adjType] or {};
-                allFeatures[adjType][adjTarget] = allFeatures[adjType][adjTarget] or 0;
-                allFeatures[adjType][adjTarget] = allFeatures[adjType][adjTarget] + 1;
-            end
+            AddAdjacentPlotFeatures(allFeatures, GetRealizedPlotFeatures(playerID, plot, adjPinSubject));
         end
     end
 
@@ -1169,45 +1163,63 @@ function IsAdjacencyApplicable(adjID:string, playerID:number)
     return true;
 end
 
--- Calculate yields for the given Adjacency_YieldChanges ID and aggregated features the surrounding plots have.
+-- =======================================================================
+-- Defining YieldRule that would be used by the yield calculation:
+-- How much yield an adjacency (Adjacency_YieldChanges row) or a modifier gives a pin
+-- on a given plot, independent of what is on the adjacent plots.
+-- Shared by the map tack yields and the district layout optimizer.
 --
--- Params:
---     adjID:   Adjacency_YieldChanges ID.
---     adjFeatures: table of features in the below format.
---                  {
---                       AdjacencyBonusTypes.ADJACENCY_FEATURE: {
---                           "FEATURE_JUNGLE": 2,
---                           "FEATURE_FOREST": 1,
---                       }
---                       ...
---                  }
---     skipApplicabilityCheck: optional, true if the caller already filtered adjID with IsAdjacencyApplicable.
--- Return: the yield type, amount, and tooltip key for the given Adjacency_YieldChanges ID.
--- Example: "YIELD_GOLD", 10, "LOC_DISTRICT_CITY_CENTER_GOLD"
-function CalculateYieldFromAdjacency(adjID:string, adjFeatures:table, playerID:number, plot:table, skipApplicabilityCheck:boolean)
-    local row = GameInfo.Adjacency_YieldChanges[adjID];
-    local yieldType = row.YieldType;
-    local yieldAmount = 0;
-    local yieldToolTipKey = row.Description;
+-- YieldType: yield type of the rule. e.g. "YIELD_SCIENCE".
+-- ToolTip: tooltip key of the rule.
+-- Amount: yield for every TilesRequired matching adjacent plots, or the fixed yield if AdjType is nil.
+-- TilesRequired: number of matching adjacent plots needed per Amount.
+-- AdjType: adjacency bonus type to look for on the adjacent plots. nil if the yield doesn't depend on them.
+-- AdjTarget: value of AdjType to look for. nil to match any value.
+-- ExcludeNonOwner: true if districts owned by other players don't match.
+--
+-- =======================================================================
 
-    -- If this adjacency doesn't apply to the player due to tech, civic or trait, simply return 0 as the amount and skip the check.
-    if not skipApplicabilityCheck and not IsAdjacencyApplicable(adjID, playerID) then
-        return yieldType, yieldAmount, yieldToolTipKey;
+-- Add the realized features of one adjacent plot (see GetRealizedPlotFeatures) to the
+-- aggregated features of all adjacent plots, which have the below format.
+-- {
+--     AdjacencyBonusTypes.ADJACENCY_FEATURE: {
+--         "FEATURE_JUNGLE": 2,
+--         "FEATURE_FOREST": 1,
+--     }
+--     ...
+-- }
+function AddAdjacentPlotFeatures(allFeatures:table, features:table)
+    for adjType, adjTarget in pairs(features) do
+        allFeatures[adjType] = allFeatures[adjType] or {};
+        allFeatures[adjType][adjTarget] = (allFeatures[adjType][adjTarget] or 0) + 1;
     end
+end
+
+-- Get the yield rule of the given Adjacency_YieldChanges ID for a pin on the given plot.
+-- Doesn't check if the adjacency applies to the player at all, see IsAdjacencyApplicable for that.
+function GetAdjacencyYieldRule(adjID:string, playerID:number, plot:table)
+    local row = GameInfo.Adjacency_YieldChanges[adjID];
+    local rule = {
+        YieldType = row.YieldType,
+        ToolTip = row.Description,
+        Amount = 0,
+        TilesRequired = row.TilesRequired,
+    };
 
     -- Check any yield from itself. Like DISTRICT_SEOWON.
     if row.Self then
-        return yieldType, row.YieldChange, yieldToolTipKey;
+        rule.Amount = row.YieldChange;
+        return rule;
     end
 
     -- Check yield from river if needed.
     if row.AdjacentRiver and IsAdjacentToRiver(playerID, plot:GetX(), plot:GetY()) then
-        return yieldType, row.YieldChange, yieldToolTipKey;
+        rule.Amount = row.YieldChange;
+        return rule;
     end
 
-    -- Check yield from adjacent features.
+    -- Check yield from any adjacent item of a type.
     local adjType = nil;
-    -- Group similar calculation together.
     if row.OtherDistrictAdjacent then
         adjType = AdjacencyBonusTypes.ADJACENCY_DISTRICT;
     elseif row.AdjacentResource then
@@ -1220,31 +1232,13 @@ function CalculateYieldFromAdjacency(adjID:string, adjFeatures:table, playerID:n
         adjType = AdjacencyBonusTypes.ADJACENCY_NATURAL_WONDER;
     end
     if adjType then
-        local adjList = adjFeatures[adjType];
-        if adjList then
-            -- Get total number of adjacency items to count.
-            local totalCount = 0;
-            for type, count in pairs(adjList) do
-                totalCount = totalCount + count;
-            end
-            -- Check if any district is owned by others.
-            if adjType == AdjacencyBonusTypes.ADJACENCY_DISTRICT then
-                local nonOwnerDistricts = adjFeatures["NON_OWNER_DISTRICT"];
-                if nonOwnerDistricts then
-                    local nonOwnerCount = 0;
-                    for type, count in pairs(nonOwnerDistricts) do
-                        nonOwnerCount = nonOwnerCount + count;
-                    end
-                    totalCount = totalCount - nonOwnerCount;
-                end
-            end
-            -- Get yield.
-            yieldAmount = row.YieldChange * math.floor(totalCount / row.TilesRequired);
-        end
-        return yieldType, yieldAmount, yieldToolTipKey;
+        rule.Amount = row.YieldChange;
+        rule.AdjType = adjType;
+        rule.ExcludeNonOwner = (adjType == AdjacencyBonusTypes.ADJACENCY_DISTRICT);
+        return rule;
     end
 
-    -- Not the above types, check another group.
+    -- Not the above types, check yield from a specific adjacent item.
     local adjTarget = nil;
     if row.AdjacentTerrain then
         adjType = AdjacencyBonusTypes.ADJACENCY_TERRAIN;
@@ -1262,18 +1256,74 @@ function CalculateYieldFromAdjacency(adjID:string, adjFeatures:table, playerID:n
         adjType = AdjacencyBonusTypes.ADJACENCY_RESOURCE_CLASS;
         adjTarget = row.AdjacentResourceClass;
     end
-    if adjType then
-        local adjList = adjFeatures[adjType];
-        if adjList then
-            local count = adjList[adjTarget];
-            if count then
-                yieldAmount = row.YieldChange * math.floor(count / row.TilesRequired);
-            end
-        end
-        return yieldType, yieldAmount, yieldToolTipKey;
+    if adjType and adjTarget ~= nil then
+        rule.Amount = row.YieldChange;
+        rule.AdjType = adjType;
+        rule.AdjTarget = adjTarget;
     end
 
-    return yieldType, yieldAmount, yieldToolTipKey;
+    return rule;
+end
+
+-- Count the adjacent plots that match the given yield rule.
+--
+-- Params:
+--     rule:        yield rule, see GetAdjacencyYieldRule.
+--     adjFeatures: aggregated features of the adjacent plots, see AddAdjacentPlotFeatures.
+-- Return: the number of matching adjacent plots.
+function CountYieldRuleMatches(rule:table, adjFeatures:table)
+    if rule.AdjType == nil then return 0; end
+    local adjList = adjFeatures[rule.AdjType];
+    if adjList == nil then return 0; end
+    if rule.AdjTarget ~= nil then
+        return adjList[rule.AdjTarget] or 0;
+    end
+    -- Get total number of adjacency items to count.
+    local count = 0;
+    for _, adjCount in pairs(adjList) do
+        count = count + adjCount;
+    end
+    -- Check if any district is owned by others.
+    if rule.ExcludeNonOwner then
+        local nonOwnerDistricts = adjFeatures["NON_OWNER_DISTRICT"];
+        if nonOwnerDistricts then
+            for _, adjCount in pairs(nonOwnerDistricts) do
+                count = count - adjCount;
+            end
+        end
+    end
+    return count;
+end
+
+-- Calculate the yield amount of the given yield rule.
+--
+-- Params:
+--     rule:  yield rule, see GetAdjacencyYieldRule.
+--     count: number of matching adjacent plots, see CountYieldRuleMatches.
+-- Return: the yield amount.
+function CalculateYieldRuleAmount(rule:table, count:number)
+    if rule.AdjType == nil then return rule.Amount; end
+    if count == 0 then return 0; end
+    return rule.Amount * math.floor(count / rule.TilesRequired);
+end
+
+-- Calculate yields for the given Adjacency_YieldChanges ID and aggregated features the surrounding plots have.
+--
+-- Params:
+--     adjID:   Adjacency_YieldChanges ID.
+--     adjFeatures: aggregated features of the adjacent plots, see AddAdjacentPlotFeatures.
+--     skipApplicabilityCheck: optional, true if the caller already filtered adjID with IsAdjacencyApplicable.
+-- Return: the yield type, amount, and tooltip key for the given Adjacency_YieldChanges ID.
+-- Example: "YIELD_GOLD", 10, "LOC_DISTRICT_CITY_CENTER_GOLD"
+function CalculateYieldFromAdjacency(adjID:string, adjFeatures:table, playerID:number, plot:table, skipApplicabilityCheck:boolean)
+    -- If this adjacency doesn't apply to the player due to tech, civic or trait, simply return 0 as the amount and skip the check.
+    if not skipApplicabilityCheck and not IsAdjacencyApplicable(adjID, playerID) then
+        local row = GameInfo.Adjacency_YieldChanges[adjID];
+        return row.YieldType, 0, row.Description;
+    end
+
+    local rule = GetAdjacencyYieldRule(adjID, playerID, plot);
+    return rule.YieldType, CalculateYieldRuleAmount(rule, CountYieldRuleMatches(rule, adjFeatures)), rule.ToolTip;
 end
 
 -- Get list of adjacency YieldChanges that apply for the given district.

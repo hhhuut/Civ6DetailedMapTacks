@@ -165,11 +165,13 @@ Before searching, the optimizer sorts the districts by **how many valid candidat
 
 For example, if your Aqueduct can only go on 2 tiles but your Campus has 8 options, the Aqueduct is placed first.
 
-### Virtual Pin System
+Districts with the same number of candidate tiles are sorted by name, so the same selection is always searched in the same order and gives the same result.
 
-During the search, the optimizer doesn't create actual map pins. Instead, it uses a **virtual pin lookup table** - a fast in-memory data structure that tracks where hypothetical districts are placed. When evaluating adjacency bonuses, it checks this virtual table first and only falls back to real map pins for tiles not part of the current search.
+### Virtual Pins & Precomputed Scoring
 
-This means the search is non-destructive: your existing pins and map state are untouched until the optimizer finishes its search.
+During the search, the optimizer doesn't create actual map pins. Instead, it only keeps track in memory of where the hypothetical districts are placed. This means the search is non-destructive: your existing pins and map state are untouched until the optimizer finishes its search.
+
+Scoring a layout only depends on what is on the tiles next to each district, and during the search only the candidate tiles change: each one either stays as it is, or gets one of the selected districts. So before searching, the optimizer works out once, for every district on every candidate tile, what each neighboring tile contributes in each of those cases. For this it uses virtual pins for the selected districts and the inferred improvements, and falls back to your real map pins for all other tiles. During the search, scoring a layout then only adds up these precomputed numbers instead of reading the map again for every layout.
 
 ### Adjacency Evaluation
 

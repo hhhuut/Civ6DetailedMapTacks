@@ -19,6 +19,12 @@ local OPT_MAP_PIN_TYPES = {
 -- Maximum search iterations before returning best-so-far.
 local MAX_SEARCH_ITERATIONS = 100000;
 
+-- Set to true to also score every layout with the slower reference calculation (same code path as the
+-- map tack yields) and log any difference. Only meant for verifying the optimizer, makes it much slower.
+local DEBUG_VERIFY_SCORES = false;
+-- Maximum number of score differences logged in detail when DEBUG_VERIFY_SCORES is on.
+local DEBUG_MAX_LOGGED_MISMATCHES = 10;
+
 -- =======================================================================
 -- Members
 -- =======================================================================
@@ -29,6 +35,387 @@ local m_VirtualPins = {};
 local m_StoredPins = {};
 -- District type => Adjacency_YieldChanges IDs that apply to the player, cached per optimization run.
 local m_ApplicableYieldChanges = {};
+
+-- =======================================================================
+-- Layout scoring
+-- During the search, only the candidate tiles of the selected districts change: each one is either
+-- as it is now, or has one of the selected districts placed on it. So the yield rules of every
+-- district on every candidate tile are prepared once per run, and scoring a layout only adds up
+-- the prepared numbers instead of reading the map and game database again.
+-- =======================================================================
+local floor = math.floor;
+
+-- Get the Adjacency_YieldChanges IDs of the given district that apply to the player.
+-- Cached per optimization run, since the player's techs, civics and traits can't change during the search.
+local function GetApplicableYieldChanges(playerID, districtType)
+    local yieldChanges = m_ApplicableYieldChanges[districtType];
+    if yieldChanges == nil then
+        yieldChanges = {};
+        for _, adjID in ipairs(GetYieldChangesForDistrict(playerID, districtType)) do
+            if IsAdjacencyApplicable(adjID, playerID) then
+                table.insert(yieldChanges, adjID);
+            end
+        end
+        m_ApplicableYieldChanges[districtType] = yieldChanges;
+    end
+    return yieldChanges;
+end
+
+-- Prepare the scoring of all selected districts on all of their candidate tiles.
+--
+-- The yield rules of each district on each candidate tile (the same rules the map tacks use) are split
+-- into fixed yields and terms that count matching adjacent plots. If an adjacent plot is a candidate
+-- tile itself, the term stores its count for every state that plot can be in during the search.
+-- Requires m_VirtualPins and m_StoredPins to be set up for the run.
+--
+-- Params:
+--     playerID:        id of the player.
+--     sortedDistricts: array of district types in search order. Their array index is the "district index".
+--     candidates:      table of district type => array of {X, Y} candidate tiles.
+--     districtWeights: table of district type => weight multiplier.
+-- Return: a table with
+--     Candidates:    district index => array of {Slot, CacheKey, Pin, Evaluator}, in the order of candidates.
+--     State:         slot => district index of the district placed on that candidate tile, 0 if none. All 0 initially.
+--     YieldTypes:    yield index => yield type.
+--     ScratchYields: yield index => amount, reused to calculate the yields of a single district.
+--     NumEvaluators: number of district/candidate tile combinations.
+local function PrepareLayoutScoring(playerID, sortedDistricts, candidates, districtWeights)
+    local numDistricts = #sortedDistricts;
+    local layout = {
+        Candidates = {},
+        State = {},
+        YieldTypes = {},
+        ScratchYields = {},
+        NumEvaluators = 0,
+    };
+
+    -- Give every candidate tile a slot and remember which districts can be placed on it.
+    local slotByPlotIndex = {};
+    local districtsBySlot = {};
+    for districtIndex, districtType in ipairs(sortedDistricts) do
+        for _, candidate in ipairs(candidates[districtType]) do
+            local plotIndex = Map.GetPlot(candidate.X, candidate.Y):GetIndex();
+            local slot = slotByPlotIndex[plotIndex];
+            if slot == nil then
+                slot = #districtsBySlot + 1;
+                slotByPlotIndex[plotIndex] = slot;
+                districtsBySlot[slot] = {};
+                layout.State[slot] = 0;
+            end
+            table.insert(districtsBySlot[slot], districtIndex);
+        end
+    end
+
+    -- Realized features of a plot as an adjacent plot (aggregated, see AddAdjacentPlotFeatures) per state:
+    -- 0 = as it is now, district index = that district placed on it.
+    local stateFeaturesByPlotIndex = {};
+    local function GetPlotStateFeatures(plot, state)
+        local plotIndex = plot:GetIndex();
+        local stateFeatures = stateFeaturesByPlotIndex[plotIndex];
+        if stateFeatures == nil then
+            stateFeatures = {};
+            stateFeaturesByPlotIndex[plotIndex] = stateFeatures;
+        end
+        local adjFeatures = stateFeatures[state];
+        if adjFeatures == nil then
+            local px, py = plot:GetX(), plot:GetY();
+            local pinSubject = nil;
+            if state == 0 then
+                -- Same lookup as GetBonusYieldsWithVirtualPins: virtual pin first, then stored pin.
+                local cacheKey = px .. "_" .. py;
+                pinSubject = m_VirtualPins[cacheKey] or m_StoredPins[cacheKey];
+            else
+                pinSubject = {Key = sortedDistricts[state], X = px, Y = py, Type = OPT_MAP_PIN_TYPES.DISTRICT};
+            end
+            -- The plot feature cache is keyed by plot only, so clear it to not get the features of another state.
+            ClearPlotFeatureCache();
+            adjFeatures = {};
+            AddAdjacentPlotFeatures(adjFeatures, GetRealizedPlotFeatures(playerID, plot, pinSubject));
+            stateFeatures[state] = adjFeatures;
+        end
+        return adjFeatures;
+    end
+
+    local yieldIndices = {};
+    local function GetYieldIndex(yieldType)
+        local yieldIndex = yieldIndices[yieldType];
+        if yieldIndex == nil then
+            table.insert(layout.YieldTypes, yieldType);
+            yieldIndex = #layout.YieldTypes;
+            yieldIndices[yieldType] = yieldIndex;
+        end
+        return yieldIndex;
+    end
+
+    local function AddFixedYield(evaluator, yieldIndex, amount)
+        if amount ~= 0 then
+            evaluator.Fixed[yieldIndex] = (evaluator.Fixed[yieldIndex] or 0) + amount;
+            evaluator.FixedTotal = evaluator.FixedTotal + amount;
+        end
+    end
+
+    -- Build the evaluator of a district on a candidate tile:
+    -- {
+    --     Weight:     weight multiplier of the district.
+    --     Fixed:      yield index => amount that is the same in every layout.
+    --     FixedTotal: sum of Fixed.
+    --     Terms:      array of {YieldIndex, Amount, TilesRequired, Base, Slots, Counts}. The number of matching
+    --                 adjacent plots is Base plus Counts[i][State[Slots[i]]] for each adjacent candidate tile i.
+    --     Mirrors:    array of {From, To} yield indices of mirror type modifiers, nil if there are none.
+    -- }
+    local function BuildEvaluator(pinSubject, plot)
+        local districtType = pinSubject.Key;
+
+        -- Same yield rules as the map tacks: adjacencies first, then modifiers.
+        local rules = {};
+        for _, adjID in ipairs(GetApplicableYieldChanges(playerID, districtType)) do
+            table.insert(rules, GetAdjacencyYieldRule(adjID, playerID, plot));
+        end
+        local activeModifiers, yieldMirrorTable = GetActiveDistrictModifiers(pinSubject, playerID);
+        for _, modifierSubject in ipairs(activeModifiers) do
+            table.insert(rules, GetModifierYieldRule(modifierSubject, pinSubject, playerID));
+        end
+
+        local adjPlots = {};
+        for _, adjPlot in pairs(Map.GetAdjacentPlots(pinSubject.X, pinSubject.Y)) do
+            if adjPlot ~= nil then
+                table.insert(adjPlots, adjPlot);
+            end
+        end
+
+        local evaluator = {
+            Weight = districtWeights[districtType] or 1,
+            Fixed = {},
+            FixedTotal = 0,
+            Terms = {},
+        };
+        for _, rule in ipairs(rules) do
+            if rule.YieldType ~= nil and rule.Amount ~= 0 then
+                local yieldIndex = GetYieldIndex(rule.YieldType);
+                if rule.AdjType == nil then
+                    AddFixedYield(evaluator, yieldIndex, rule.Amount);
+                else
+                    local term = {
+                        YieldIndex = yieldIndex,
+                        Amount = rule.Amount,
+                        TilesRequired = rule.TilesRequired,
+                        Base = 0,
+                        Slots = {},
+                        Counts = {},
+                    };
+                    for _, adjPlot in ipairs(adjPlots) do
+                        local baseCount = CountYieldRuleMatches(rule, GetPlotStateFeatures(adjPlot, 0));
+                        local slot = slotByPlotIndex[adjPlot:GetIndex()];
+                        local counts = nil;
+                        if slot ~= nil then
+                            for _, districtIndex in ipairs(districtsBySlot[slot]) do
+                                local count = CountYieldRuleMatches(rule, GetPlotStateFeatures(adjPlot, districtIndex));
+                                if count ~= baseCount then
+                                    counts = counts or {};
+                                    counts[districtIndex] = count;
+                                end
+                            end
+                        end
+                        if counts == nil then
+                            -- This adjacent plot counts the same in every layout.
+                            term.Base = term.Base + baseCount;
+                        else
+                            -- Fill in every state, so the search doesn't need nil checks.
+                            for state = 0, numDistricts do
+                                counts[state] = counts[state] or baseCount;
+                            end
+                            table.insert(term.Slots, slot);
+                            table.insert(term.Counts, counts);
+                        end
+                    end
+                    if #term.Slots == 0 then
+                        AddFixedYield(evaluator, yieldIndex, CalculateYieldRuleAmount(rule, term.Base));
+                    else
+                        table.insert(evaluator.Terms, term);
+                    end
+                end
+            end
+        end
+
+        -- Mirror type modifiers, applied after all other yields like in GetBonusYields.
+        for _, yieldMirror in ipairs(yieldMirrorTable) do
+            if yieldMirror.YieldTypeToMirror ~= nil and yieldMirror.YieldTypeToGrant ~= nil then
+                evaluator.Mirrors = evaluator.Mirrors or {};
+                table.insert(evaluator.Mirrors, {
+                    From = GetYieldIndex(yieldMirror.YieldTypeToMirror),
+                    To = GetYieldIndex(yieldMirror.YieldTypeToGrant),
+                });
+            end
+        end
+
+        return evaluator;
+    end
+
+    for districtIndex, districtType in ipairs(sortedDistricts) do
+        local candidateList = {};
+        for _, candidate in ipairs(candidates[districtType]) do
+            local plot = Map.GetPlot(candidate.X, candidate.Y);
+            local pinSubject = {
+                Key = districtType,
+                X = candidate.X,
+                Y = candidate.Y,
+                Type = OPT_MAP_PIN_TYPES.DISTRICT,
+            };
+            table.insert(candidateList, {
+                Slot = slotByPlotIndex[plot:GetIndex()],
+                CacheKey = candidate.X .. "_" .. candidate.Y,
+                Pin = pinSubject,
+                Evaluator = BuildEvaluator(pinSubject, plot),
+            });
+        end
+        layout.Candidates[districtIndex] = candidateList;
+        layout.NumEvaluators = layout.NumEvaluators + #candidateList;
+    end
+
+    for yieldIndex = 1, #layout.YieldTypes do
+        layout.ScratchYields[yieldIndex] = 0;
+    end
+
+    -- Don't leave hypothetical plot features in the cache shared with the map tacks.
+    ClearPlotFeatureCache();
+
+    return layout;
+end
+
+-- Calculate the yields of a district in the layout given by state.
+--
+-- Params:
+--     evaluator: evaluator of the district on its tile, see PrepareLayoutScoring.
+--     state:     slot => district index of the district placed on that candidate tile, 0 if none.
+--     yields:    yield index => amount for all yield types, overwritten with the district's yields.
+-- Return: the total (unweighted) yield amount of the district.
+local function GetDistrictYields(evaluator, state, yields)
+    local numYieldTypes = #yields;
+    local fixed = evaluator.Fixed;
+    for i = 1, numYieldTypes do
+        yields[i] = fixed[i] or 0;
+    end
+    local terms = evaluator.Terms;
+    for i = 1, #terms do
+        local term = terms[i];
+        local count = term.Base;
+        local slots, counts = term.Slots, term.Counts;
+        for k = 1, #slots do
+            count = count + counts[k][state[slots[k]]];
+        end
+        if count ~= 0 then
+            yields[term.YieldIndex] = yields[term.YieldIndex] + term.Amount * floor(count / term.TilesRequired);
+        end
+    end
+    local mirrors = evaluator.Mirrors;
+    if mirrors then
+        for i = 1, #mirrors do
+            local mirror = mirrors[i];
+            yields[mirror.To] = yields[mirror.To] + yields[mirror.From];
+        end
+    end
+    local total = 0;
+    for i = 1, numYieldTypes do
+        total = total + yields[i];
+    end
+    return total;
+end
+
+-- Same as GetDistrictYields, but only returns the total, which is faster for districts without mirror type modifiers.
+local function GetDistrictYieldTotal(evaluator, state, scratchYields)
+    if evaluator.Mirrors then
+        return GetDistrictYields(evaluator, state, scratchYields);
+    end
+    local total = evaluator.FixedTotal;
+    local terms = evaluator.Terms;
+    for i = 1, #terms do
+        local term = terms[i];
+        local count = term.Base;
+        local slots, counts = term.Slots, term.Counts;
+        for k = 1, #slots do
+            count = count + counts[k][state[slots[k]]];
+        end
+        if count ~= 0 then
+            total = total + term.Amount * floor(count / term.TilesRequired);
+        end
+    end
+    return total;
+end
+
+-- Sum up the (unweighted) yields of all placed districts. Their placement must be set in layout.State.
+--
+-- Params:
+--     layout: see PrepareLayoutScoring.
+--     placed: district index => candidate the district is placed on.
+-- Return: table of yield type => total amount.
+local function SumLayoutYields(layout, placed)
+    local sums = {};
+    local yields = layout.ScratchYields;
+    for j = 1, #placed do
+        GetDistrictYields(placed[j].Evaluator, layout.State, yields);
+        for i = 1, #yields do
+            sums[i] = (sums[i] or 0) + yields[i];
+        end
+    end
+    local totalYields = {};
+    for i, yieldType in ipairs(layout.YieldTypes) do
+        if sums[i] ~= nil and sums[i] ~= 0 then
+            totalYields[yieldType] = sums[i];
+        end
+    end
+    return totalYields;
+end
+
+local function FormatYieldsForLog(yields)
+    local parts = {};
+    for yieldType, amount in pairs(yields) do
+        table.insert(parts, yieldType .. "=" .. amount);
+    end
+    table.sort(parts);
+    return table.concat(parts, ", ");
+end
+
+-- Score the layout again with the reference calculation (EvaluateConfiguration, same code path as the
+-- map tack yields) and log any difference to the prepared scoring. Used when DEBUG_VERIFY_SCORES is on.
+-- The placement must be set in layout.State.
+local function VerifyLayoutScore(playerID, layout, placed, districtWeights, score, stats)
+    stats.Layouts = stats.Layouts + 1;
+
+    -- Put the placed districts into the virtual pins, so the reference calculation sees them.
+    local config = {};
+    local coveredPins = {};
+    for j, candidate in ipairs(placed) do
+        coveredPins[j] = m_VirtualPins[candidate.CacheKey];
+        m_VirtualPins[candidate.CacheKey] = candidate.Pin;
+        table.insert(config, candidate.Pin);
+    end
+    local referenceScore, referenceYields = EvaluateConfiguration(playerID, config, districtWeights);
+    for j = #placed, 1, -1 do
+        m_VirtualPins[placed[j].CacheKey] = coveredPins[j];
+    end
+
+    local yields = SumLayoutYields(layout, placed);
+    local isMatch = math.abs(score - referenceScore) <= 1e-6;
+    for yieldType, amount in pairs(referenceYields) do
+        if math.abs((yields[yieldType] or 0) - amount) > 1e-6 then isMatch = false; end
+    end
+    for yieldType, amount in pairs(yields) do
+        if math.abs((referenceYields[yieldType] or 0) - amount) > 1e-6 then isMatch = false; end
+    end
+
+    if not isMatch then
+        stats.Mismatches = stats.Mismatches + 1;
+        if stats.Mismatches <= DEBUG_MAX_LOGGED_MISMATCHES then
+            local layoutParts = {};
+            for _, candidate in ipairs(placed) do
+                table.insert(layoutParts, candidate.Pin.Key .. "(" .. candidate.Pin.X .. "," .. candidate.Pin.Y .. ")");
+            end
+            print("DMT Optimizer: Score mismatch for " .. table.concat(layoutParts, " ")
+                .. ": prepared " .. score .. " (" .. FormatYieldsForLog(yields) .. ")"
+                .. ", reference " .. referenceScore .. " (" .. FormatYieldsForLog(referenceYields) .. ")");
+        end
+    end
+end
 
 -- =======================================================================
 -- Public API
@@ -158,7 +545,11 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
         table.insert(sortedDistricts, districtType);
     end
     table.sort(sortedDistricts, function(a, b)
-        return #candidates[a] < #candidates[b];
+        if #candidates[a] ~= #candidates[b] then
+            return #candidates[a] < #candidates[b];
+        end
+        -- Break ties by name, so the same selection is always searched in the same order.
+        return a < b;
     end);
 
     -- Log candidate counts.
@@ -174,13 +565,6 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
         end
     end
 
-    -- Step 5: Run backtracking search.
-    local bestConfig = nil;
-    local bestScore = -1;
-    local bestYields = {};
-    local currentConfig = {};
-    local searchIterations = 0;
-
     -- Initialize virtual pins with fixed pins and inferred improvements.
     m_VirtualPins = {};
     for key, pin in pairs(fixedPins) do
@@ -194,53 +578,66 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
     m_StoredPins = GetMapPinSubjectTable(playerID);
     m_ApplicableYieldChanges = {};
 
-    local function Search(districtIndex, usedSearchTiles)
+    -- Step 5: Prepare the layout scoring.
+    local prepareStart = os.clock();
+    local layout = PrepareLayoutScoring(playerID, sortedDistricts, candidates, districtWeights);
+    print("DMT Optimizer: Prepared scoring for " .. layout.NumEvaluators .. " district/tile combinations in "
+        .. string.format("%.2f", os.clock() - prepareStart) .. "s");
+
+    -- Step 6: Run backtracking search.
+    local numDistricts = #sortedDistricts;
+    local state = layout.State;
+    local scratchYields = layout.ScratchYields;
+    local placed = {}; -- district index => candidate it is placed on in the current layout.
+    local bestPlaced = nil;
+    local bestScore = -1;
+    local searchIterations = 0;
+    local verifyStats = nil;
+    if DEBUG_VERIFY_SCORES then
+        verifyStats = {Layouts = 0, Mismatches = 0};
+    end
+
+    local function Search(districtIndex)
         if searchIterations >= MAX_SEARCH_ITERATIONS then
             return;
         end
 
-        if districtIndex > #sortedDistricts then
-            -- All districts placed. Evaluate full configuration.
+        if districtIndex > numDistricts then
+            -- All districts placed. Score the layout.
             searchIterations = searchIterations + 1;
-            local score, yields = EvaluateConfiguration(playerID, currentConfig, districtWeights);
+            local score = 0;
+            for j = 1, numDistricts do
+                local evaluator = placed[j].Evaluator;
+                score = score + evaluator.Weight * GetDistrictYieldTotal(evaluator, state, scratchYields);
+            end
+            if verifyStats then
+                VerifyLayoutScore(playerID, layout, placed, districtWeights, score, verifyStats);
+            end
             if score > bestScore then
                 bestScore = score;
-                bestYields = yields;
-                -- Deep copy current config as best.
-                bestConfig = {};
-                for _, entry in ipairs(currentConfig) do
-                    table.insert(bestConfig, {Key = entry.Key, X = entry.X, Y = entry.Y, Type = entry.Type});
+                bestPlaced = {};
+                for j = 1, numDistricts do
+                    bestPlaced[j] = placed[j];
                 end
             end
             return;
         end
 
-        local districtType = sortedDistricts[districtIndex];
-        local candidateList = candidates[districtType];
-
-        for _, candidate in ipairs(candidateList) do
-            local cacheKey = candidate.X .. "_" .. candidate.Y;
-            if not usedSearchTiles[cacheKey] then
+        local candidateList = layout.Candidates[districtIndex];
+        for i = 1, #candidateList do
+            local candidate = candidateList[i];
+            local slot = candidate.Slot;
+            if state[slot] == 0 then
                 -- Place this district at this candidate.
-                local pinSubject = {
-                    Key = districtType,
-                    X = candidate.X,
-                    Y = candidate.Y,
-                    Type = OPT_MAP_PIN_TYPES.DISTRICT,
-                };
-                table.insert(currentConfig, pinSubject);
-                usedSearchTiles[cacheKey] = true;
-                -- Remember the pin this district covers (e.g. an inferred improvement) to restore it on backtrack.
-                local coveredPin = m_VirtualPins[cacheKey];
-                m_VirtualPins[cacheKey] = pinSubject;
+                state[slot] = districtIndex;
+                placed[districtIndex] = candidate;
 
                 -- Recurse to place next district.
-                Search(districtIndex + 1, usedSearchTiles);
+                Search(districtIndex + 1);
 
                 -- Backtrack.
-                table.remove(currentConfig);
-                usedSearchTiles[cacheKey] = nil;
-                m_VirtualPins[cacheKey] = coveredPin;
+                state[slot] = 0;
+                placed[districtIndex] = nil;
 
                 if searchIterations >= MAX_SEARCH_ITERATIONS then
                     return;
@@ -249,21 +646,36 @@ function OptimizeDistrictLayout(playerID, cityX, cityY, districtTypes, districtW
         end
     end
 
-    -- Start search with already-used tiles from existing districts.
-    local usedSearchTiles = {};
-    for key, _ in pairs(usedTiles) do
-        usedSearchTiles[key] = true;
-    end
     local searchStart = os.clock();
-    Search(1, usedSearchTiles);
+    Search(1);
     local searchElapsed = os.clock() - searchStart;
 
-    print("DMT Optimizer: Search complete. Iterations: " .. searchIterations .. ", Time: " .. string.format("%.1f", searchElapsed) .. "s, Best score: " .. bestScore);
+    print("DMT Optimizer: Search complete. Iterations: " .. searchIterations .. ", Time: " .. string.format("%.2f", searchElapsed) .. "s, Best score: " .. bestScore);
+    if verifyStats then
+        print("DMT Optimizer: Verified " .. verifyStats.Layouts .. " layout(s) against the reference calculation, "
+            .. verifyStats.Mismatches .. " mismatch(es)");
+    end
+
+    local bestConfig = nil;
+    local bestYields = {};
+    if bestPlaced then
+        bestConfig = {};
+        for j, candidate in ipairs(bestPlaced) do
+            local pin = candidate.Pin;
+            table.insert(bestConfig, {Key = pin.Key, X = pin.X, Y = pin.Y, Type = pin.Type});
+            state[candidate.Slot] = j;
+        end
+        bestYields = SumLayoutYields(layout, bestPlaced);
+        for _, candidate in ipairs(bestPlaced) do
+            state[candidate.Slot] = 0;
+        end
+    end
 
     -- Clean up.
     m_VirtualPins = {};
     m_StoredPins = {};
     m_ApplicableYieldChanges = {};
+    ClearPlotFeatureCache();
 
     return bestConfig, bestScore, bestYields;
 end
@@ -399,7 +811,9 @@ function GetDistrictAvailability(playerID, cityX, cityY, districtTypes, respectP
 end
 
 -- Evaluate the total adjacency yield score for a configuration of districts.
--- Uses the virtual pin lookup to resolve adjacency between hypothetical pins.
+-- Reference calculation with the same code path as the map tack yields, using the virtual pin lookup to resolve
+-- adjacency between hypothetical pins. The search uses the much faster prepared scoring instead (see
+-- PrepareLayoutScoring), so this is only used to verify it (see DEBUG_VERIFY_SCORES).
 --
 -- Params:
 --     playerID: id of the player.
@@ -429,22 +843,6 @@ function EvaluateConfiguration(playerID, config, districtWeights)
     return totalScore, totalYields;
 end
 
--- Get the Adjacency_YieldChanges IDs of the given district that apply to the player.
--- Cached per optimization run, since the player's techs, civics and traits can't change during the search.
-local function GetApplicableYieldChanges(playerID, districtType)
-    local yieldChanges = m_ApplicableYieldChanges[districtType];
-    if yieldChanges == nil then
-        yieldChanges = {};
-        for _, adjID in ipairs(GetYieldChangesForDistrict(playerID, districtType)) do
-            if IsAdjacencyApplicable(adjID, playerID) then
-                table.insert(yieldChanges, adjID);
-            end
-        end
-        m_ApplicableYieldChanges[districtType] = yieldChanges;
-    end
-    return yieldChanges;
-end
-
 -- Calculate bonus yields for a pin using the virtual pin lookup, falling back to the stored pins.
 -- This is a simplified version of GetBonusYields that skips tooltip generation
 -- for performance. Only valid during OptimizeDistrictLayout, since it relies on the per-run lookups.
@@ -465,12 +863,7 @@ function GetBonusYieldsWithVirtualPins(playerID, pinSubject)
             -- Look up virtual pin first, then fall back to stored pin.
             local adjCacheKey = plot:GetX() .. "_" .. plot:GetY();
             local adjPinSubject = m_VirtualPins[adjCacheKey] or m_StoredPins[adjCacheKey];
-
-            local features = GetRealizedPlotFeatures(playerID, plot, adjPinSubject);
-            for adjType, adjTarget in pairs(features) do
-                allFeatures[adjType] = allFeatures[adjType] or {};
-                allFeatures[adjType][adjTarget] = (allFeatures[adjType][adjTarget] or 0) + 1;
-            end
+            AddAdjacentPlotFeatures(allFeatures, GetRealizedPlotFeatures(playerID, plot, adjPinSubject));
         end
     end
 
