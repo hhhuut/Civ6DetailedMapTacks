@@ -143,6 +143,7 @@ This lets you "lock in" certain tiles - for example, if you've already pinned a 
 Press the **Optimize** button. The optimizer will search for the best layout and:
 
 - **On success:** Place map tacks at the optimal positions. The popup closes automatically.
+- **Time limit reached:** Place map tacks for the best layout found so far. The popup stays open with a notice that a better layout may exist (see [Time Limit](#time-limit)).
 - **No valid placement:** If no legal placement exists for the selected districts, a message will tell you so.
 
 ![optimizer-placement-completed](res/optimizer_placement_completed.png "The Optimizer completed the placement")
@@ -153,11 +154,16 @@ Press the **Optimize** button. The optimizer will search for the best layout and
 
 Understanding how the optimizer works under the hood can help you get the most out of it.
 
-### Search Algorithm: Constrained Backtracking
+### Search Algorithm: Branch and Bound
 
-The optimizer uses a **backtracking search** algorithm. It systematically tries placing each selected district on each valid tile, then recurses to place the next district, and so on. After all districts are placed, it evaluates the total adjacency score. If this score beats the current best, it becomes the new best. Then it "backtracks" - undoes the last placement and tries the next candidate tile.
+The optimizer works in two phases:
 
-This is an **exhaustive search** (up to an iteration limit), meaning it will find the true optimum as long as the search space is small enough.
+1. **Starting layout:** It places the districts one after another, each on the tile that scores best so far. Then it keeps moving single districts to free tiles or swapping the tiles of two districts, as long as that improves the score. It repeats this starting from a few random layouts and keeps the best result.
+1. **Backtracking search:** It then systematically tries placing each selected district on each valid tile, recursing to place the next district, and so on. After all districts are placed, it evaluates the total adjacency score. If this score beats the current best, it becomes the new best. Before trying a tile, it works out a **best case**: the highest score the layout could still reach if everything still open worked out perfectly. If even that can't beat the best layout found so far, the search skips the tile and every layout that would follow from it.
+
+Since only layouts that provably can't win are skipped, the search still finds the true optimum, while scoring far fewer layouts. If the search finishes within the time limit, the result is proven to be the best possible layout (according to the optimizer's scoring).
+
+To find good layouts early, each district's tiles are tried in order of their best case, highest first. Bonuses that shrink with more neighbors, like the Seowon's -1 per adjacent district, are handled as well: their best case assumes as few of those neighbors as possible.
 
 ### Most-Constrained-First Ordering
 
@@ -205,9 +211,9 @@ The optimizer is aware of:
 
 Please keep these limitations in mind:
 
-### Iteration Cap
+### Time Limit
 
-The optimizer has a hard cap of **100,000 search iterations**. If the search space is very large (many districts selected, many candidate tiles each), the optimizer will stop after 100,000 iterations and return the **best result found so far**, which may not be the true global optimum.
+The search stops after **30 seconds**. If it hasn't finished by then (many districts selected, many candidate tiles each), the optimizer places the **best layout found so far**, which may not be the true global optimum. In that case the popup stays open and shows a notice.
 
 **Tip:** To get better results when optimizing many districts, consider running the optimizer in smaller batches (e.g., optimize 2–3 districts at a time, lock them in with pins, then optimize the next batch).
 
@@ -246,9 +252,7 @@ If "Respect Existing Pins" is enabled and you run the optimizer multiple times f
 
 ### Performance
 
-The backtracking search runs synchronously. For large search spaces, there may be a brief pause (typically a few seconds) while the optimizer works. The UI shows an "Optimizing layout..." message during this time.
-
-On my PC the optimizer managed around 3,000 iterations per second, so the 100,00 maximum iterations can take some 30 seconds.
+The search runs synchronously, so the game pauses while the optimizer works, at most for the [time limit](#time-limit) of 30 seconds. The UI shows an "Optimizing layout..." message during this time.
 
 ### Placement Validity
 
@@ -268,7 +272,7 @@ The optimizer assumes you *will* be able to build the selected districts - it's 
 | **Default Hotkey** | Shift + O |
 | **Hotkey Config** | Game Options -> Key Bindings -> Detailed Map Tacks |
 | **Placement Radius** | 3 tiles from city center |
-| **Max Search Iterations** | 100,000 |
+| **Time Limit** | 30 seconds |
 | **Scoring Method** | Weighted sum of all adjacency yields |
 | **Default Weight** | 1 (per district) |
 | **Output** | Map tacks placed at optimal positions |

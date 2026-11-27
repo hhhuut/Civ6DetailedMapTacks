@@ -49,6 +49,9 @@
         <Row Tag="LOC_DMT_OPTIMIZER_RESULT">
             <Text>Optimal layout found: {1_Summary}</Text>
         </Row>
+        <Row Tag="LOC_DMT_OPTIMIZER_TIME_LIMIT_REACHED">
+            <Text>[COLOR_Civ6Yellow]Time limit reached - a better layout may exist.[ENDCOLOR]</Text>
+        </Row>
         <Row Tag="LOC_DMT_OPTIMIZER_NO_SOLUTION">
             <Text>No valid placement found for the selected districts.</Text>
         </Row>

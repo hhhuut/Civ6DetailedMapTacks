@@ -137,7 +137,7 @@ function OnOptimize()
     Controls.OptimizeButton:SetDisabled(true);
 
     -- Run the optimizer.
-    local bestConfig, bestScore, bestYields = OptimizeDistrictLayout(playerID, m_CityX, m_CityY, districtTypes, districtWeights, m_AssumeImproved, m_RespectPins);
+    local bestConfig, bestScore, bestYields, isOptimal = OptimizeDistrictLayout(playerID, m_CityX, m_CityY, districtTypes, districtWeights, m_AssumeImproved, m_RespectPins);
 
     Controls.OptimizeButton:SetDisabled(false);
 
@@ -145,12 +145,17 @@ function OnOptimize()
         -- Place the optimized pins.
         PlaceOptimizedPins(playerID, bestConfig);
 
-        -- Show result.
-        local summary = FormatYieldSummary(bestYields);
-        Controls.ResultLabel:SetText(Locale.Lookup("LOC_DMT_OPTIMIZER_RESULT", summary));
+        if isOptimal then
+            -- Show result.
+            local summary = FormatYieldSummary(bestYields);
+            Controls.ResultLabel:SetText(Locale.Lookup("LOC_DMT_OPTIMIZER_RESULT", summary));
 
-        -- Close the popup.
-        ClosePopup();
+            -- Close the popup.
+            ClosePopup();
+        else
+            -- Keep the popup open, so the player sees that a better layout may exist.
+            Controls.ResultLabel:SetText(Locale.Lookup("LOC_DMT_OPTIMIZER_TIME_LIMIT_REACHED"));
+        end
     else
         Controls.ResultLabel:SetText(Locale.Lookup("LOC_DMT_OPTIMIZER_NO_SOLUTION"));
     end
